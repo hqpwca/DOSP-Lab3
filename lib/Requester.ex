@@ -32,11 +32,12 @@ defmodule Chord.Requester do
 
 	def handle_cast({:receive_suc, pos, res}, {id, key, num, received}) do
 		nre = Map.put(received, pos, res)
-		#IO.inspect({id, pos, res})
+		Chord.Collector.check_result(pos, res)
 		if map_size(nre) == num do
 			Chord.Collector.finish(id)
 			{:noreply, {id, key, 0, Map.new}}
 		else
+			Chord.Collector.finish(id, map_size(nre))
 			{:noreply, {id, key, num, nre}}
 		end
 	end

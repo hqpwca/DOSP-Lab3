@@ -14,13 +14,31 @@ defmodule Chord.Collector do
 		GenServer.cast({:global, :collector}, {:simulate})
 	end
 
+	def check_result(message_id, node_key) do
+		GenServer.cast({:global, :collector}, {:check_result, message_id, node_key})
+	end
+
 	def finish(id) do
 		GenServer.cast({:global, :collector}, {:finished, id})
 	end
 
+	def finish(id, step) do
+		GenServer.cast({:global, :collector}, {:finished, id, step})
+	end
+
 	#Server Side
 	def init(args) do
-		{:ok, args}
+		ans1 = Enum.reduce(1..args[:n], [], fn(x, acc) -> [Chord.Encoder.encode_node(x) | acc] end)
+		ans1 = Enum.sort(ans1)
+		ans1 = ans1 ++ ans1
+		#ans2 = Enum.reduce(1..args[:nr], [], fn(x, acc) -> [{:message, x, Chord.Encoder.encode_message(x)} | acc] end)
+		ans2 = Enum.reduce(1..args[:nr], [], fn(x, acc) ->
+			[{x, Enum.find(ans1, fn(y) -> Chord.Encoder.encode_message(x) < y end)} | acc] 
+		end)
+		result = ans2 |> Map.new
+		#IO.inspect result
+		
+		{:ok, Map.merge(args, %{result: result, correct: 0, wrong: 0})}
 	end
 
 	def handle_cast({:simulate}, state) do
@@ -37,7 +55,7 @@ defmodule Chord.Collector do
 		running = MapSet.new(1..state[:n])
 		IO.puts "Finished joining nodes, waiting for stabilize."
 
-		Process.sleep(state[:n])
+		Process.sleep(Kernel.trunc(state[:n] * dtime / 5) + 1)
 
 		fail_list = 
 			if state[:nf] > 0 do
@@ -59,6 +77,34 @@ defmodule Chord.Collector do
 		{:noreply, Map.put(state, :running_nodes, running)}
 	end
 
+	def handle_cast({:finished, id, step}, state) do
+		if state[:running_nodes] == nil do
+			Process.sleep(1000)
+			finish(id)
+			{:noreply, state}
+		else
+			new_running = MapSet.delete(state[:running_nodes], id)
+			#IO.puts("Node No.#{id} finished.")
+			if Enum.empty?(new_running) do
+				IO.puts("Finished Step ##{step}, Correct: #{state[:correct]}, Wrong: #{state[:wrong]}")
+				running = MapSet.new(1..state[:n])
+				{:noreply, Map.put(state, :running_nodes, running)}
+			else
+				{:noreply, Map.put(state, :running_nodes, new_running)}
+			end
+		end
+	end
+
+	def handle_cast({:check_result, message_id, node_key}, state) do
+		result = state[:result]
+		#IO.inspect {message_id, result[:message_id], node_key}
+		if result[message_id] == node_key do
+			{:noreply, Map.put(state, :correct, state[:correct] + 1)}
+		else
+			{:noreply, Map.put(state, :wrong, state[:wrong] + 1)}
+		end
+	end
+
 	def handle_cast({:finished, id}, state) do
 		if state[:running_nodes] == nil do
 			Process.sleep(1000)
@@ -68,6 +114,7 @@ defmodule Chord.Collector do
 			new_running = MapSet.delete(state[:running_nodes], id)
 			#IO.puts("Node No.#{id} finished.")
 			if Enum.empty?(new_running) do
+				IO.puts("Finished Step ##{state[:nr]}, Correct: #{state[:correct]}, Wrong: #{state[:wrong]}")
 				IO.puts("Average Hops each request: #{state[:total_hops] / state[:n] / state[:nr]}")
 				send(state[:deamon], :finish)
 			end
