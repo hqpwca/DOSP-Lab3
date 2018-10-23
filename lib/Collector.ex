@@ -26,23 +26,31 @@ defmodule Chord.Collector do
 		GenServer.cast({:global, :collector}, {:finished, id, step})
 	end
 
+	def build_ans(running_nodes) do
+		GenServer.cast({:global, :collector}, {:build_ans, running_nodes})
+	end
+
 	#Server Side
 	def init(args) do
-		ans1 = Enum.reduce(1..args[:n], [], fn(x, acc) -> [Chord.Encoder.encode_node(x) | acc] end)
+		{:ok, args}
+	end
+
+	def handle_cast({:build_ans, running_nodes}, state) do
+		ans1 = Enum.reduce(running_nodes, [], fn(x, acc) -> [Chord.Encoder.encode_node(x) | acc] end)
 		ans1 = Enum.sort(ans1)
 		ans1 = ans1 ++ ans1
 		#ans2 = Enum.reduce(1..args[:nr], [], fn(x, acc) -> [{:message, x, Chord.Encoder.encode_message(x)} | acc] end)
-		ans2 = Enum.reduce(1..args[:nr], [], fn(x, acc) ->
+		ans2 = Enum.reduce(1..state[:nr], [], fn(x, acc) ->
 			[{x, Enum.find(ans1, fn(y) -> Chord.Encoder.encode_message(x) < y end)} | acc] 
 		end)
 		result = ans2 |> Map.new
 		#IO.inspect result
 		
-		{:ok, Map.merge(args, %{result: result, correct: 0, wrong: 0})}
+		{:noreply, Map.merge(state, %{result: result, correct: 0, wrong: 0})}
 	end
 
 	def handle_cast({:simulate}, state) do
-		dtime = Kernel.trunc((state[:n] - 1) / 50) + 1
+		dtime = state[:n] * (Kernel.trunc((state[:n] - 1)/100) + 1)
 		IO.puts "Start joining nodes, about to take #{dtime * state[:n] / 1000}s"
 		Enum.each(2..state[:n], fn(x) -> 
 			if x/state[:n] >= 0.2 && (x-1)/state[:n] < 0.2, do: IO.puts "20% Joining Finished."
@@ -52,10 +60,13 @@ defmodule Chord.Collector do
 			Chord.Node.join(Chord.Encoder.encode_node(x), Chord.Encoder.encode_node(x-1))
 			Process.sleep(dtime)
 		end)
-		running = MapSet.new(1..state[:n])
-		IO.puts "Finished joining nodes, waiting for stabilize."
+		running = Enum.to_list(1..state[:n])
+		IO.puts "Finished joining nodes, waiting for stabilize, about to take #{1 + dtime * Kernel.max(state[:n], 128) / 2000}s"
 
-		Process.sleep(Kernel.trunc(state[:n] * dtime / 5) + 1)
+		Process.sleep(Kernel.trunc(Kernel.max(state[:n], 128) * dtime / 2) + 1000)
+
+		IO.puts "Stabilizing Finished."
+		Enum.each(1..state[:n], fn(x) -> Chord.Node.stop_stabilize(Chord.Encoder.encode_node(x)) end)
 
 		fail_list = 
 			if state[:nf] > 0 do
@@ -63,18 +74,26 @@ defmodule Chord.Collector do
 			else
 				nil
 			end
+
+		running = if fail_list != nil, do: MapSet.new(running -- fail_list), else: MapSet.new(running)
+		build_ans(running)
+
+		failed = if fail_list != nil, do: Enum.reduce(fail_list, Map.new, fn(x, acc) -> Map.put(acc, Chord.Encoder.encode_node(x), true) end)
 		
 		if fail_list != nil do
 			IO.puts("Closing failed nodes.")
 			fail_list = Enum.sort(fail_list)
 			Enum.each(fail_list, fn(x) -> Chord.Node.set_failed(Chord.Encoder.encode_node(x)) end)
-			Enum.each(fail_list, fn(x) -> MapSet.delete(running, x) end)
+			Enum.each(1..state[:n], fn(x) -> Chord.Node.acc_fail_nodes(Chord.Encoder.encode_node(x), failed) end)
 			IO.puts("Failed nodes closed complete.")
 		end
 
+		#Enum.each(1..state[:n], fn(x) -> Chord.Node.print_state(Chord.Encoder.encode_node(x)) end)
+
 		IO.puts("Start requesting.")
+		IO.inspect(running)
 		Enum.each(1..state[:n], fn(x) -> if fail_list == nil || x not in fail_list, do: Chord.Requester.start_request(x, state[:nr]) end)
-		{:noreply, Map.put(state, :running_nodes, running)}
+		{:noreply, Map.merge(state, %{running_nodes: running, all_nodes: running})}
 	end
 
 	def handle_cast({:finished, id, step}, state) do
@@ -87,7 +106,7 @@ defmodule Chord.Collector do
 			#IO.puts("Node No.#{id} finished.")
 			if Enum.empty?(new_running) do
 				IO.puts("Finished Step ##{step}, Correct: #{state[:correct]}, Wrong: #{state[:wrong]}")
-				running = MapSet.new(1..state[:n])
+				running = MapSet.new(state[:all_nodes])
 				{:noreply, Map.put(state, :running_nodes, running)}
 			else
 				{:noreply, Map.put(state, :running_nodes, new_running)}
@@ -97,10 +116,11 @@ defmodule Chord.Collector do
 
 	def handle_cast({:check_result, message_id, node_key}, state) do
 		result = state[:result]
-		#IO.inspect {message_id, result[:message_id], node_key}
+		#IO.inspect {message_id, result[message_id], node_key}
 		if result[message_id] == node_key do
 			{:noreply, Map.put(state, :correct, state[:correct] + 1)}
 		else
+			#IO.inspect {message_id, result[message_id], node_key}
 			{:noreply, Map.put(state, :wrong, state[:wrong] + 1)}
 		end
 	end
