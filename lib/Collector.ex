@@ -38,10 +38,12 @@ defmodule Chord.Collector do
 	def handle_cast({:build_ans, running_nodes}, state) do
 		ans1 = Enum.reduce(running_nodes, [], fn(x, acc) -> [Chord.Encoder.encode_node(x) | acc] end)
 		ans1 = Enum.sort(ans1)
-		ans1 = ans1 ++ ans1
-		#ans2 = Enum.reduce(1..args[:nr], [], fn(x, acc) -> [{:message, x, Chord.Encoder.encode_message(x)} | acc] end)
+		#IO.inspect ans1
+		ans3 = for n <- ans1, do: n + 4294967296
+		ans1 = ans1 ++ ans3
+		#ans2 = Enum.reduce(1..state[:nr], [], fn(x, acc) -> [{:message, x, Chord.Encoder.encode_message(x)} | acc] end)
 		ans2 = Enum.reduce(1..state[:nr], [], fn(x, acc) ->
-			[{x, Enum.find(ans1, fn(y) -> Chord.Encoder.encode_message(x) < y end)} | acc] 
+			[{x, Integer.mod(Enum.find(ans1, fn(y) -> Chord.Encoder.encode_message(x) < y end), 4294967296) } | acc] 
 		end)
 		result = ans2 |> Map.new
 		#IO.inspect result
@@ -50,7 +52,7 @@ defmodule Chord.Collector do
 	end
 
 	def handle_cast({:simulate}, state) do
-		dtime = state[:n] * (Kernel.trunc((state[:n] - 1)/100) + 1)
+		dtime = 10 * (Kernel.trunc((state[:n] - 1)/200) + 1)
 		IO.puts "Start joining nodes, about to take #{dtime * state[:n] / 1000}s"
 		Enum.each(2..state[:n], fn(x) -> 
 			if x/state[:n] >= 0.2 && (x-1)/state[:n] < 0.2, do: IO.puts "20% Joining Finished."
@@ -61,9 +63,9 @@ defmodule Chord.Collector do
 			Process.sleep(dtime)
 		end)
 		running = Enum.to_list(1..state[:n])
-		IO.puts "Finished joining nodes, waiting for stabilize, about to take #{1 + dtime * Kernel.max(state[:n], 128) / 2000}s"
+		IO.puts "Finished joining nodes, waiting for stabilize, about to take #{Kernel.max(2000,Kernel.trunc(dtime * state[:n] / 5))/1000}s"
 
-		Process.sleep(Kernel.trunc(Kernel.max(state[:n], 128) * dtime / 2) + 1000)
+		Process.sleep(Kernel.max(2000,Kernel.trunc(dtime * state[:n] / 5)))
 
 		IO.puts "Stabilizing Finished."
 		Enum.each(1..state[:n], fn(x) -> Chord.Node.stop_stabilize(Chord.Encoder.encode_node(x)) end)
@@ -121,6 +123,7 @@ defmodule Chord.Collector do
 			{:noreply, Map.put(state, :correct, state[:correct] + 1)}
 		else
 			#IO.inspect {message_id, result[message_id], node_key}
+			#Chord.Node.print_state(node_key)
 			{:noreply, Map.put(state, :wrong, state[:wrong] + 1)}
 		end
 	end
@@ -135,7 +138,7 @@ defmodule Chord.Collector do
 			#IO.puts("Node No.#{id} finished.")
 			if Enum.empty?(new_running) do
 				IO.puts("Finished Step ##{state[:nr]}, Correct: #{state[:correct]}, Wrong: #{state[:wrong]}")
-				IO.puts("Average Hops each request: #{state[:total_hops] / state[:n] / state[:nr]}")
+				IO.puts("Average Hops each request: #{state[:total_hops] / (state[:n]-state[:nf]) / state[:nr]}")
 				send(state[:deamon], :finish)
 			end
 			{:noreply, Map.put(state, :running_nodes, new_running)}

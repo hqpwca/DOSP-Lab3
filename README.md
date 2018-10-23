@@ -6,7 +6,17 @@
 
 ## Usage
 * First run `mix escript.build` to build the executable file
-* Then just run `./chord numNodes numRequests` to run the program. (The bonus part hasn't been implemented)
+* Then just run `./chord numNodes numRequests [-f failNodes]` to run the program.
+
+## Bonus Part
+* In the bonus part, I implemented the sucessor list of each node to get failed node.
+* When the percentage of the failed nodes becomes larger, the average hops per request will become larger because the some of the nodes in the finger table will be unaccessed, just as the paper says.
+* Average Hops (total nodes 256):
+	* 0 failed nodes -> 3.8305
+	* 16 failed nodes -> 3.845
+	* 64 failed nodes -> 3.89375
+	* 128 failed nodes -> 4.396875
+* The system is resilient most time. However, because we used less time to let the system stabilize and stop it to test, so sometimes there will be some request can't receive the correct result.
 
 ## Simulation Method
 1. Implemented the chord algorithm, divided some of the function to prevent the usage of the `call` in `GenServer`. In this way, we can let elixir itself to deal with the concurrency problems rather than having program stucked because of deadlock.)

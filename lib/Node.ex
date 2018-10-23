@@ -4,7 +4,7 @@ defmodule Chord.Node do
 	# Client Side
 	def start_link({x, num_nodes}) do
 		key = Chord.Encoder.encode_node(x)
-		args = %{id: x, key: key, m: 16, pre: nil, suc: [key], isuc: key, finger: Map.new, failed: false, dtime: Kernel.trunc((num_nodes - 1)/100) + 1, fnodes: Map.new}
+		args = %{id: x, key: key, m: 16, pre: nil, suc: [key], isuc: key, finger: Map.new, failed: false, dtime: Kernel.trunc((num_nodes - 1)/200) + 1, fnodes: Map.new}
 		# status: {bits, key, pre, suc, finger, failed}
 		GenServer.start_link(__MODULE__, args, name: {:global, key})
 	end
@@ -253,7 +253,6 @@ defmodule Chord.Node do
 
 	def handle_cast({:found_successor, res, ref}, state) do
 		{referer, return_type, pdata} = ref
-		if return_type == :request, do: IO.inspect {res, ref}
 		case return_type do
 			:fix     -> loop_fix_finger_p2(referer, pdata, res)
 			:join    -> join_p2(referer, res)
